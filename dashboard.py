@@ -1,23 +1,23 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-from datetime import datetime
+import datetime
 from matplotlib.patches import Wedge
-from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
 
-# --- Setup ---
+# --- Indlæs og forbered data ---
 import gspread
 from gspread_dataframe import get_as_dataframe
-from google.oauth2 import service_account
 
+# Opsætning af adgang
+from google.oauth2 import service_account
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds_dict = st.secrets["service_account"]
 credentials = service_account.Credentials.from_service_account_info(creds_dict, scopes=scope)
 client = gspread.authorize(credentials)
 
-# --- Web-dashboard ---
-SHEET_ID = "1plU6MRL7v9lkQ9VeaGJUD4ljuftZve16nPF8N6y36Kg"
+# Social-dashboard
+SHEET_ID = "1hSHzko--Pnt2R6iZD_jyi-WMOycVw49snibLi575Z2M"
 worksheet = client.open_by_key(SHEET_ID).worksheet("Salg")
 df = get_as_dataframe(worksheet, evaluate_formulas=True)
 
@@ -29,33 +29,28 @@ df['Uge'] = df['Dato for salg'].dt.isocalendar().week
 df['Pris'] = pd.to_numeric(df['Pris'], errors='coerce')
 
 # --- Beregninger ---
-total_sum = df["Pris"].sum()
-total_count = len(df)
-q2_maal = 50000  # Juster hvis nødvendigt
-procent = total_sum / q2_maal if q2_maal else 0
+samlet = df['Pris'].sum()
+q2_maal = 90880
+kendte_produkter = ["Leadpage", "Klaviyo", "Lead Ads", "Ekstra kampagne", "Xtra Visual", "SST"]
+procent = samlet / q2_maal if q2_maal else 0
 
 # --- Ugeopsætning ---
 start_uge = 18
 slut_uge = 26
 alle_uger = list(range(start_uge, slut_uge + 1))
-ugevis = df.groupby("Uge")["Pris"].sum().reindex(alle_uger, fill_value=0)
+
+ugevis = df.groupby('Uge')['Pris'].sum().reindex(alle_uger, fill_value=0)
 ugevis.index = ugevis.index.map(lambda u: f"Uge {u}")
 
-# --- Restmål-beregning ---
-nu_uge = datetime.now().isocalendar().week
-resterende_uger = len([u for u in alle_uger if u > nu_uge])
-manglende_beloeb = max(q2_maal - total_sum, 0)
-restmaal = manglende_beloeb / resterende_uger if resterende_uger > 0 else manglende_beloeb
-
-# --- Layout ---
-st.set_page_config(page_title="Web Dashboard", layout="wide")
-st.markdown("<h1 style='text-align: center;margin-top:-50px;margin-bottom:-80px'>Web - Q2 Mål</h1>", unsafe_allow_html=True)
+# Layout og autorefresh
+st.set_page_config(page_title="Social Dashboard", layout="wide")
+st.markdown("<h1 style='text-align: center;margin-top:-50px;margin-bottom:-80px'>Social - Q2 Mål</h1>", unsafe_allow_html=True)
 from streamlit_autorefresh import st_autorefresh
 st_autorefresh(interval=300_000, key="datarefresh")
 
 col1, col2 = st.columns([2, 1])
 
-# --- Linechart ---
+# --- Linechart med markering af nuværende uge ---
 with col1:
     st.subheader(" ")
     inner_cols = st.columns([0.1, 0.8, 0.1])
@@ -67,10 +62,10 @@ with col1:
             spine.set_visible(False)
         ugevis.plot(ax=ax, marker='o', label='Realisering', color='steelblue')
 
-        ugentlig_maal = q2_maal / len(alle_uger)
-        if restmaal > 0:
-            ax.axhline(y=restmaal, color='red', linestyle='--', label='Ugemål')
+        ugentlig_maal = q2_maal / (slut_uge - start_uge + 1)
+        ax.axhline(y=ugentlig_maal, color='orange', linestyle='--', label='Mål pr. uge')
 
+        nu_uge = datetime.datetime.now().isocalendar().week
         uge_labels = list(ugevis.index)
         if f"Uge {nu_uge}" in uge_labels:
             pos = uge_labels.index(f"Uge {nu_uge}")
@@ -81,7 +76,7 @@ with col1:
         ax.legend()
         st.pyplot(fig)
 
-# --- Donutgraf ---
+# --- Donutgraf med gradienteffekt ---
 with col2:
     st.subheader(" ")
     inner_cols = st.columns([0.2, 0.6, 0.2])
@@ -91,6 +86,7 @@ with col2:
         ax2.set_ylim(-1.2, 1.2)
         ax2.axis('off')
 
+        from matplotlib.colors import LinearSegmentedColormap
         gradient_cmap = LinearSegmentedColormap.from_list("custom_blue", ["#1f77b4", "#66b3ff"])
         gradient_color = gradient_cmap(0.5)
 
@@ -106,19 +102,11 @@ with col2:
         ax2.text(0, 0, f"{procent*100:.2f}%", ha='center', va='center', fontsize=20)
         st.pyplot(fig2)
 
-# --- Top produkter + totalboks ---
+# --- Alle produkter solgt, sorteret efter omsætning ---
 st.markdown("<br>", unsafe_allow_html=True)
-produktliste = [
-    "Cookie",
-    "Ekstra undersider",
-    "Tekster til undersider",
-    "Undersider med tekster",
-    "SoMe Feed Pro"
-]
+produkt_data = df.groupby("Produkt")["Pris"].agg(["sum", "count"]).reindex(kendte_produkter, fill_value=0)
 
-produkt_data = df.groupby("Produkt")["Pris"].agg(["sum", "count"]).reindex(produktliste, fill_value=0)
-cols = st.columns(6)
-
+cols = st.columns(len(produkt_data))
 for i, (navn, row) in enumerate(produkt_data.iterrows()):
     cols[i].markdown(f"""
     <div style="text-align:center; padding:10px; background:white; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,0.05);">
@@ -128,22 +116,14 @@ for i, (navn, row) in enumerate(produkt_data.iterrows()):
     </div>
     """, unsafe_allow_html=True)
 
-cols[5].markdown(f"""
-<div style="text-align:center; padding:10px; background:white; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,0.05);">
-  <div style="font-size:18px; font-weight:bold;">Antal produkter solgt</div>
-  <div style="font-size:24px; font-weight:normal;">{total_count}</div>
-  <div style="font-size:16px;">&nbsp;</div>
-</div>
-""", unsafe_allow_html=True)
-
 # --- Total og progressbar ---
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown(f"""
 <div style="text-align:center; font-size:24px; font-weight:bold; margin-bottom:10px;">
-  Samlet: {total_sum:,.0f} kr.
+  Samlet: {samlet:,.0f} kr.
 </div>
 """, unsafe_allow_html=True)
-progress_text = f"{total_sum:,.0f} kr. / {q2_maal:,.0f} kr."
+progress_text = f"{samlet:,.0f} kr. / {q2_maal:,.0f} kr."
 st.markdown(f"""
 <div style="margin-top: 20px;">
   <div style="font-size:16px; text-align:center; margin-bottom:4px;">
